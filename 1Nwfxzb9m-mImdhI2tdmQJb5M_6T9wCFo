@@ -1,0 +1,254 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[5]:
+
+
+import dns
+import dns.query
+import dns.message
+import datetime
+import time
+import sys
+import ipaddress
+
+
+# In[7]:
+
+
+root_servers_dict = {'a' : '198.41.0.4',
+                     'b' : '199.9.14.201',
+                     'c' : '192.33.4.12',
+                     'd' : '199.7.91.13',
+                     'e' : '192.203.230.10',
+                     'f' : '192.5.5.241',
+                     'g' : '192.112.36.4',
+                     'h' : '198.97.190.53',
+                     'i' : '192.36.148.17',
+                     'j' : '192.58.128.30',
+                     'k' : '193.0.14.129',
+                     'l' : '199.7.83.42',
+                     'm' : '202.12.27.33'
+                    }
+
+#print("Dictionary containing the hostnames and IP addresses of root_servers from IANA :\n", root_servers_dict)
+
+
+# In[8]:
+
+
+sites=['Google.com','Youtube.com','Facebook.com','Baidu.com','Wikipedia.org','Reddit.com','Yahoo.com',
+'Google.co.in','Qq.com','Taobao.com','Amazon.com','Tmall.com','Twitter.com','Google.co.jp','Instagram.com','Live.com',
+'Vk.com','Sohu.com','Sina.com.cn','Jd.com','Weibo.com','360.cn','Google.de','Google.co.uk','Google.com.br']
+
+
+# In[9]:
+
+
+def run_dns(domain_name, record_type, ip_add):
+    """
+    Function to resolve a single iteration of DNS
+    :param domain_name: Domain name that needs to be resolved
+    :param record_type: Type of resource record
+    :param ip_add: IP Address of server
+    
+    :returns DNS response
+    """
+    query = dns.message.make_query(domain_name, record_type)
+    res = dns.query.udp(query, ip_add, timeout=0.5)
+    return res
+
+
+# In[10]:
+
+
+def validity(response, rdtype):
+    try:
+        if rdtype == 'A':
+            ip = str(response.answer[0].items[0])
+            ipaddress.ip_address(ip)
+            return True
+        elif rdtype == 'NS':                          
+            answer_type = response.answer[0].rdtype   
+            if answer_type == 2:
+                return True     
+            elif answer_type == 5:
+                return False                         
+            else:
+                return False                         
+        elif rdtype == 'MX':
+            answer_type = response.answer[0].rdtype   
+            if answer_type == 15:
+                return True
+            elif answer_type == 5:                     
+                return False
+            else:
+                return False                           
+    except Exception as e:
+        return False
+
+
+# In[11]:
+
+
+def resolving_dns(domain_name, resolution_type, root_servers_dict):
+
+    #iterating over different root servers in case the current server is not available
+    for root_ip in root_servers_dict.values():
+        #print("Running DNS function on root IP: " , root_ip)
+        try:
+            res = run_dns(domain_name, resolution_type, root_ip)
+            if len(res.additional) == 0 :
+                #print("Root server not able to resolve, thus trying next root server")
+                continue                         
+            while(len(res.answer)==0 ):
+                if len(res.additional) >  0: #fetch information from Additional section first
+                    #print(res.additional)
+                    for record in res.additional:
+                        following_ip = str(record.items[0]) #fetch the IP address from returned rr and convert it to a string
+                        #print("\n\nRunning DNS function on following IP: ", following_ip)
+                        try:
+                            following_response = run_dns(domain_name, resolution_type, following_ip)
+                            res = following_response #done this to again iterate on the next IP
+                            #print(res)
+                            break
+                        except Exception:
+                            pass
+                else: # if both ANSWER and ADDITIONAL is empty, then find the IP of AUTHORITY
+                    
+                    rrsets = res.authority[0].items
+                    try:
+                        for index in range(0,len(rrsets)):
+                            response_ns = rrsets[index].to_text()
+                    except Exception:
+                        pass
+                    
+                    following_ip = resolving_dns(response_ns, 'A', root_servers_dict)
+                    #print("\n Following IP", following_ip)
+                    res.additional.append(following_ip.answer[0])  # add rrset that contains IP of a AUTHORITY to response
+             
+            if validity(res, resolution_type):  # ip is in the response
+                return res
+            else:                         # CNAME is in the response
+                #print('CNAME is in the response\n')
+                for i in res.answer:
+                    cname = str(i.items[0])   #Fetch CName from answer section
+                    cnames.append(cname)
+                    final_ans = resolving_dns(cname, resolution_type, root_servers_dict)
+                    return final_ans  
+
+            break #break from the main for loop
+        except Exception as e:
+            pass
+
+
+# In[27]:
+
+
+#domain_name = input('Enter the name of domain that needs to be resolved : ')
+#resolution_type = input('Enter the type of DNS resolution i.e. A or NS or MX : ')
+
+domain_name = sys.argv[1]
+resolution_type = sys.argv[2]
+
+#print(domain_name, resolution_type)
+
+start = time.time()
+res = resolving_dns(domain_name, resolution_type, root_servers_dict)
+end = time.time() - start
+
+#print("FINAL RESPONSE: \n")
+print("QUESTION SECTION: \n", res.question[0])
+print("\n\nANSWER SECTION: \n", res.answer[0])
+print("\n\nQuery Time: ", int(end*1000))
+print("WHEN: " , datetime.datetime.now().strftime("%a %b %d %H:%M:%S %Y"))
+print("MSG SIZE rcvd: ", len(str('QUESTION SECTION: \n') + str(res.question[0]) + str('\n\nANSWER SECTION: \n') + str(res.answer[0])))
+
+
+# In[27]:
+
+
+average_mydns = []
+for i in sites:
+    sum=0
+    print(i)
+    for j in range(10):
+        start = time.time()
+        res = resolving_dns(i, 'A', root_servers_dict)
+        end = time.time() - start
+        #print(int(end*1000))
+        sum=sum + int(end*1000)
+        
+        
+    average=sum/10
+    
+    average_mydns.append(round(average,1))
+    print(average_mydns)
+
+
+# In[28]:
+
+
+import dns.resolver
+import numpy as np
+import matplotlib.pyplot as plt
+
+res=dns.resolver.Resolver(configure=False)
+res.nameservers=['8.8.8.8','8.8.4.4']
+
+average_gdns =[]
+for i in sites:
+    sum=0
+    print(i)
+    for j in range(10):
+        start = time.time()
+        res.query(i, 'A')
+        end = time.time() - start
+        sum=sum + int(end*1000)
+        
+    average=sum/10
+    average_gdns.append(round(average,1))
+    print(average_gdns)
+
+
+# In[57]:
+
+
+res2=dns.resolver.Resolver(configure=False)
+res2.nameservers=['127.0.0.53']
+
+import time
+average_ldns=[]
+for i in sites:
+    sum=0
+    print(i)
+    for j in range(10):
+        start = time.time()
+        res2.query(i, 'A')
+        end = time.time() - start
+        sum=sum + int(end*1000)
+        
+    average=sum/10
+    average_ldns.append(round(average,2))
+    print(average_ldns)
+
+
+# In[62]:
+
+
+
+time  = np.sort(average_mydns)
+time1 = np.sort(average_ldns)
+time2 = np.sort(average_gdns)
+
+p = 1. * np.arange(len(time))/(len(time) - 1)
+p1=1. * np.arange(len(time1))/(len(time1) - 1)
+p2=1. * np.arange(len(time2))/(len(time2) - 1)
+plt.axis([0,1000, 0, 1])
+plt.plot(time1, p1, time2, p2, time , p)
+plt.margins(0.02)
+plt.xlabel('Time(milliseconds)')
+plt.ylabel('CDF')
+plt.legend(["LOCAL DNS", "GOOGLE DNS","MY DNS"], loc ="lower right")
+plt.show()
+
